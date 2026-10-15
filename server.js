@@ -1,46 +1,91 @@
 const express = require('express');
 const cors = require('cors');
-const axios = require('axios');
-const cheerio = require('cheerio');
+const fetch = require('node-fetch');
 
 const app = express();
-app.use(cors());
-
 const PORT = process.env.PORT || 3000;
 
+app.use(cors());
+app.use(express.json());
+
+// Clé API TMDB
+const TMDB_API_KEY = '8265bd1679663a7ea12ac168da84d2e8';
+const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
+
+// Route de test
 app.get('/', (req, res) => {
-    res.send('Serveur Backend Novyx VF - En ligne !');
+    res.send('Serveur Backend Novyx VF Multi-Sources - En ligne !');
 });
 
+// Helper pour récupérer l'IMDb ID via TMDB
+async function getImdbId(type, tmdbId) {
+    try {
+        const response = await fetch(`${TMDB_BASE_URL}/${type}/${tmdbId}/external_ids?api_key=${TMDB_API_KEY}`);
+        const data = await response.json();
+        return data.imdb_id || null;
+    } catch (e) {
+        console.error('Erreur récupération IMDb ID:', e);
+        return null;
+    }
+}
+
+// Endpoint principal pour les liens de streaming (Multi-sources VF)
 app.get('/api/source/:type/:id', async (req, res) => {
     const { type, id } = req.params;
-    const { season, episode } = req.query;
+    const season = req.query.season || 1;
+    const episode = req.query.episode || 1;
+    const preferredServer = req.query.server || 'auto';
 
     try {
-        const tmdbUrl = `https://api.themoviedb.org/3/${type}/${id}?api_key=8265bd1679663a7ea12ac168da84d2e8&language=fr-FR`;
-        const tmdbRes = await axios.get(tmdbUrl);
-        const title = tmdbRes.data.title || tmdbRes.data.name;
+        // 1. Récupérer l'IMDb ID
+        const imdbId = await getImdbId(type, id);
+        const mediaId = imdbId || id;
 
-        let embedUrl = "";
+        // 2. Liste des sources disponibles orientées VF/Multilingue
+        let sources = [];
+
         if (type === 'movie') {
-            embedUrl = `https://vidsrc.icu/embed/movie/${id}`;
+            sources = [
+                { name: 'vidsrcme_fr', url: `https://vidsrc.me/embed/movie?imdb=${mediaId}&ds_lang=fr` },
+                { name: 'multiembed', url: `https://multiembed.mov/?video_id=${mediaId}&tmdb=1` },
+                { name: 'vidsrcpro', url: `https://vidsrc.pro/embed/movie/${id}` },
+                { name: 'vidsrcxyz', url: `https://vidsrc.xyz/embed/movie/${id}` }
+            ];
         } else {
-            embedUrl = `https://vidsrc.icu/embed/tv/${id}/${season || 1}/${episode || 1}`;
+            // Séries (ex: Chica Vampiro, Nowhere Boys)
+            sources = [
+                { name: 'vidsrcme_fr', url: `https://vidsrc.me/embed/tv?imdb=${mediaId}&season=${season}&episode=${episode}&ds_lang=fr` },
+                { name: 'multiembed', url: `https://multiembed.mov/?video_id=${mediaId}&tmdb=1&s=${season}&e=${episode}` },
+                { name: 'vidsrcpro', url: `https://vidsrc.pro/embed/tv/${id}/${season}/${episode}` },
+                { name: 'vidsrcxyz', url: `https://vidsrc.xyz/embed/tv/${id}/${season}/${episode}` }
+            ];
         }
 
-        res.json({
+        // 3. Choix de l'URL finale
+        let selectedUrl = sources[0].url;
+
+        if (preferredServer !== 'auto') {
+            const match = sources.find(s => s.name === preferredServer);
+            if (match) selectedUrl = match.url;
+        }
+
+        return res.json({
             success: true,
-            title: title,
-            streamUrl: embedUrl,
-            language: "VF / French"
+            type: type,
+            tmdbId: id,
+            imdbId: imdbId,
+            season: season,
+            episode: episode,
+            streamUrl: selectedUrl,
+            allSources: sources
         });
 
     } catch (error) {
-        console.error("Erreur serveur :", error.message);
-        res.status(500).json({ success: false, error: "Impossible de récupérer le flux VF." });
+        console.error('Erreur traitement backend:', error);
+        return res.status(500).json({ success: false, message: 'Erreur lors de la génération du flux.' });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`Serveur Novyx VF lancé sur le port ${PORT}`);
+    console.log(`Serveur Novyx démarré sur le port ${PORT}`);
 });

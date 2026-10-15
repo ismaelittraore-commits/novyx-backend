@@ -1,4 +1,3 @@
-
 const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
@@ -12,79 +11,77 @@ app.use(express.json());
 const TMDB_API_KEY = '8265bd1679663a7ea12ac168da84d2e8';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
+// Base de données en mémoire pour les liens hébergeurs VF personnalisés (Streamzo Style)
+// Tu peux ajouter ici les liens directs d'hébergeurs (Doodstream, Streamtape, Supervideo, Vidoza)
+const customLinks = {
+    // Exemple pour une série spécifique (TMDB ID pour Chica Vampiro = 60309)
+    "tv_60309_s1_e1": [
+        { provider: "Doodstream (VF)", url: "https://doodstream.com/e/example_chica_s1e1" },
+        { provider: "Streamtape (VF)", url: "https://streamtape.com/e/example_chica_s1e1" },
+        { provider: "Supervideo (VF)", url: "https://supervideo.tv/e/example_chica_s1e1" }
+    ]
+};
+
 app.get('/', (req, res) => {
-    res.send('Serveur Backend Novyx - Mode Scraper VF Actif');
+    res.send('Serveur Backend Novyx - Mode Streamzo VF Actif');
 });
 
-async function getImdbId(type, tmdbId) {
-    try {
-        const response = await fetch(`${TMDB_BASE_URL}/${type}/${tmdbId}/external_ids?api_key=${TMDB_API_KEY}`);
-        const data = await response.json();
-        return data.imdb_id || null;
-    } catch (e) {
-        return null;
-    }
-}
-
-// Endpoint principal avec sources VF prioritaires (Frembed / Vidsrc FR / Superembed)
+// Récupérer les liens d'un média
 app.get('/api/source/:type/:id', async (req, res) => {
     const { type, id } = req.params;
     const season = req.query.season || 1;
     const episode = req.query.episode || 1;
-    const preferredServer = req.query.server || 'vidsrcme_fr';
+    const serverKey = req.query.server || 'auto';
 
-    try {
-        const imdbId = await getImdbId(type, id);
-        const mediaId = imdbId || id;
+    const mediaKey = type === 'movie' ? `movie_${id}` : `tv_${id}_s${season}_e${episode}`;
+    
+    let availableSources = [];
 
-        let sources = [];
-
-        if (type === 'movie') {
-            sources = [
-                // Source 1 : Frembed / Lecteur spécialisé VF
-                { name: 'frembed', url: `https://frembed.live/api/film.php?id=${id}` },
-                // Source 2 : VidSrc VF forcée
-                { name: 'vidsrcme_fr', url: `https://vidsrc.me/embed/movie?imdb=${mediaId}&ds_lang=fr` },
-                // Source 3 : Multiembed / VF/Multi
-                { name: 'multiembed', url: `https://multiembed.mov/?video_id=${mediaId}&tmdb=1` },
-                // Source 4 : Vidbinge
-                { name: 'vidbinge', url: `https://vidbinge.dev/embed/movie/${id}` }
-            ];
-        } else {
-            // Séries TV (Chica Vampiro, Nowhere Boys, etc.)
-            sources = [
-                // Source 1 : Frembed TV (Spécialisé Séries VF)
-                { name: 'frembed', url: `https://frembed.live/api/serie.php?id=${id}&sa=${season}&epi=${episode}` },
-                // Source 2 : VidSrc TV VF
-                { name: 'vidsrcme_fr', url: `https://vidsrc.me/embed/tv?imdb=${mediaId}&season=${season}&episode=${episode}&ds_lang=fr` },
-                // Source 3 : Multiembed TV
-                { name: 'multiembed', url: `https://multiembed.mov/?video_id=${mediaId}&tmdb=1&s=${season}&e=${episode}` },
-                // Source 4 : Vidbinge TV
-                { name: 'vidbinge', url: `https://vidbinge.dev/embed/tv/${id}/${season}/${episode}` }
-            ];
-        }
-
-        let selectedUrl = sources[0].url;
-        const match = sources.find(s => s.name === preferredServer);
-        if (match) selectedUrl = match.url;
-
-        return res.json({
-            success: true,
-            type: type,
-            tmdbId: id,
-            imdbId: imdbId,
-            season: season,
-            episode: episode,
-            streamUrl: selectedUrl,
-            allSources: sources
-        });
-
-    } catch (error) {
-        console.error('Erreur backend:', error);
-        return res.status(500).json({ success: false, message: 'Erreur génération flux.' });
+    // 1. Vérifier si un lien hébergeur personnalisé existe dans la base Novyx
+    if (customLinks[mediaKey] && customLinks[mediaKey].length > 0) {
+        availableSources = customLinks[mediaKey].map(item => ({
+            name: item.provider,
+            url: item.url,
+            type: 'custom'
+        }));
     }
+
+    // 2. Fallbacks sur les résolveurs d'hébergeurs VF globaux
+    availableSources.push(
+        { name: 'Supervideo / Dood (VF)', url: `https://vidsrc.me/embed/${type}?tmdb=${id}${type === 'tv' ? `&season=${season}&episode=${episode}` : ''}&ds_lang=fr`, type: 'embed' },
+        { name: 'Streamtape / Multi (VF)', url: `https://multiembed.mov/?video_id=${id}&tmdb=1${type === 'tv' ? `&s=${season}&e=${episode}` : ''}`, type: 'embed' },
+        { name: 'Vidbinge (HD)', url: `https://vidbinge.dev/embed/${type}/${id}${type === 'tv' ? `/${season}/${episode}` : ''}`, type: 'embed' }
+    );
+
+    let selected = availableSources[0];
+    if (serverKey !== 'auto') {
+        const found = availableSources.find(s => s.name.toLowerCase().includes(serverKey.toLowerCase()));
+        if (found) selected = found;
+    }
+
+    return res.json({
+        success: true,
+        mediaKey: mediaKey,
+        streamUrl: selected.url,
+        sources: availableSources
+    });
+});
+
+// Endpoint pour ajouter facilement un lien d'hébergeur VF (Panel Streamzo)
+app.post('/api/admin/add-link', (req, res) => {
+    const { mediaKey, provider, url } = req.body;
+    if (!mediaKey || !provider || !url) {
+        return res.status(400).json({ success: false, message: 'Paramètres manquants' });
+    }
+
+    if (!customLinks[mediaKey]) {
+        customLinks[mediaKey] = [];
+    }
+
+    customLinks[mediaKey].unshift({ provider, url });
+    return res.json({ success: true, message: `Lien ajouté pour ${mediaKey}`, links: customLinks[mediaKey] });
 });
 
 app.listen(PORT, () => {
-    console.log(`Serveur démarré sur le port ${PORT}`);
+    console.log(`Serveur Novyx (Streamzo Architecture) démarré sur le port ${PORT}`);
 });

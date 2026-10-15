@@ -7,44 +7,35 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Base de données pour tes liens spécifiques (Mode Streamzo)
-const streamDatabase = {
-    // Tu pourras ajouter tes vrais liens MP4 / M3U8 ici
-    "movie_550": {
-        streamType: "mp4",
-        directUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-    }
-};
-
 app.get('/', (req, res) => {
-    res.send('Backend Novyx - Actif');
+    res.send('Backend Novyx - Mode Intégrateur Intelligent Actif');
 });
 
-// Route principale pour fournir la vidéo
+// Route principale pour récupérer les sources d'embed robustes
 app.get('/api/source/:type/:id', (req, res) => {
     const { type, id } = req.params;
     const season = req.query.season || 1;
     const episode = req.query.episode || 1;
 
-    const mediaKey = type === 'movie' ? `movie_${id}` : `tv_${id}_s${season}_e${episode}`;
+    let embedUrl = "";
+    let altEmbedUrl = "";
 
-    // 1. Si la vidéo est enregistrée dans ta base
-    if (streamDatabase[mediaKey]) {
-        return res.json({
-            success: true,
-            streamType: streamDatabase[mediaKey].streamType,
-            directUrl: streamDatabase[mediaKey].directUrl
-        });
+    if (type === 'movie') {
+        embedUrl = `https://vidsrc.xyz/embed/movie?tmdb=${id}`;
+        altEmbedUrl = `https://vidsrc.icu/embed/movie/${id}`;
+    } else {
+        embedUrl = `https://vidsrc.xyz/embed/tv?tmdb=${id}&season=${season}&episode=${episode}`;
+        altEmbedUrl = `https://vidsrc.icu/embed/tv/${id}/${season}/${episode}`;
     }
 
-    // 2. Flux vidéo de démonstration par défaut (évite l'alerte "non disponible")
     return res.json({
         success: true,
-        streamType: "mp4",
-        directUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+        type: "iframe_embed",
+        primaryUrl: embedUrl,
+        fallbackUrl: altEmbedUrl
     });
 });
 
 app.listen(PORT, () => {
-    console.log(`Serveur prêt sur le port ${PORT}`);
+    console.log(`Serveur Novyx Backend prêt sur le port ${PORT}`);
 });
